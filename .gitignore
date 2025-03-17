@@ -3,6 +3,10 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+
+
+backend/*.pkl
+backend\movie_rec.ipynb
 # C extensions
 *.so
 
