@@ -4,30 +4,63 @@ import pandas as pd
 from flask_cors import CORS
 import traceback
 import json
+import os
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}})
 
-# Load your data and similarity matrix
-try:
-    print("Loading movies data...")
-    movies_df = pd.DataFrame(pickle.load(open('backend/movies.pkl', 'rb')))
-    print("Loading similarity matrix...")
-    similarity = pickle.load(open('backend/similarity.pkl', 'rb'))
-    print("Loading df3 data...")
-    df3 = pd.read_csv('backend/df3.csv')
+# Global variables to track data loading status
+data_loaded = False
+loading_errors = []
+
+def load_data():
+    global movies_df, df3, similarity, data_loaded, loading_errors
+    loading_errors = []
     
-    # Print sample data to understand the structure
-    print("\nSample movie data:")
-    sample_movie = df3.iloc[0]
-    print(f"Genres format: {type(sample_movie['genres'])} - {sample_movie['genres']}")
-    print(f"Cast format: {type(sample_movie['cast'])} - {sample_movie['cast']}")
-    print(f"Crew format: {type(sample_movie['crew'])} - {sample_movie['crew']}")
-    
-    print("✅ All data loaded successfully!")
-except Exception as e:
-    print(f"❌ Error loading data: {str(e)}")
-    print(traceback.format_exc())
+    try:
+        # Check if files exist first
+        required_files = ['movies.pkl', 'similarity.pkl', 'df3.csv']
+        for file in required_files:
+            if not os.path.exists(file):
+                loading_errors.append(f"Missing file: {file}")
+        
+        if loading_errors:
+            print("❌ Missing required files:")
+            for error in loading_errors:
+                print(f"  - {error}")
+            return False
+        
+        print("Loading movies data...")
+        movies_df = pd.DataFrame(pickle.load(open('movies.pkl', 'rb')))
+        print("Loading similarity matrix...")
+        similarity = pickle.load(open('similarity.pkl', 'rb'))
+        print("Loading df3 data...")
+        df3 = pd.read_csv('df3.csv')
+        
+        # Print sample data to understand the structure
+        print("\nSample movie data:")
+        sample_movie = df3.iloc[0]
+        print(f"Genres format: {type(sample_movie['genres'])} - {sample_movie['genres']}")
+        print(f"Cast format: {type(sample_movie['cast'])} - {sample_movie['cast']}")
+        print(f"Crew format: {type(sample_movie['crew'])} - {sample_movie['crew']}")
+        
+        print("✅ All data loaded successfully!")
+        data_loaded = True
+        return True
+        
+    except Exception as e:
+        error_msg = f"Error loading data: {str(e)}"
+        loading_errors.append(error_msg)
+        print(f"❌ {error_msg}")
+        print(traceback.format_exc())
+        return False
+
+# Initialize data loading
+if not load_data():
+    print("\nInitializing empty DataFrames due to loading errors...")
+    movies_df = pd.DataFrame()
+    df3 = pd.DataFrame()
+    similarity = []
 
 def parse_string_list(value):
     """Helper function to parse string lists from DataFrame"""
@@ -55,9 +88,16 @@ def parse_string_list(value):
 def recommend(movie_name):
     print(f"🔍 Searching for movie: {movie_name}")
     
+    # Check if data is loaded
+    if movies_df.empty or df3.empty or not similarity:
+        error_msg = "Movie data not loaded. Please check if all required data files exist."
+        print(f"❌ {error_msg}")
+        return jsonify({"error": error_msg}), 500
+    
     if movie_name not in movies_df['title'].values:
-        print(f"❌ Movie not found: {movie_name}")
-        return jsonify({"error": f"Movie '{movie_name}' not found in database"}), 404
+        error_msg = f"Movie '{movie_name}' not found in database"
+        print(f"❌ {error_msg}")
+        return jsonify({"error": error_msg}), 404
 
     try:
         # Find the movie index
@@ -123,8 +163,9 @@ def recommend(movie_name):
                 continue
 
         if not result:
-            print("❌ No valid recommendations found")
-            return jsonify({"error": "No valid recommendations found"}), 404
+            error_msg = "No valid recommendations found"
+            print(f"❌ {error_msg}")
+            return jsonify({"error": error_msg}), 404
 
         print(f"✅ Returning {len(result)} recommendations")
         return jsonify(result)
@@ -197,10 +238,27 @@ def movie_details(movie_id):
         print(f"❌ Error in movie_details endpoint: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
+@app.route('/status', methods=['GET'])
+def get_status():
+    """Endpoint to check data loading status"""
+    return jsonify({
+        "status": "ready" if data_loaded else "error",
+        "errors": loading_errors if loading_errors else None
+    })
+
 @app.route('/recommend', methods=['POST'])
 def get_recommendations():
     try:
         print("📥 Received recommendation request")
+        
+        # Check if data is loaded
+        if not data_loaded:
+            error_msg = "Movie data not loaded. Please check server logs for details."
+            if loading_errors:
+                error_msg += f" Errors: {', '.join(loading_errors)}"
+            print(f"❌ {error_msg}")
+            return jsonify({"error": error_msg}), 500
+        
         data = request.json
         print(f"Request data: {data}")
         
@@ -212,12 +270,6 @@ def get_recommendations():
         print(f"🎬 Processing request for movie: {movie_name}")
         
         recommendations = recommend(movie_name)
-        
-        if not recommendations:
-            print("❌ No recommendations found")
-            return jsonify({"error": "No recommendations found"}), 404
-
-        print(f"📤 Returning {len(recommendations.get_json())} recommendations.")
         return recommendations
         
     except Exception as e:
