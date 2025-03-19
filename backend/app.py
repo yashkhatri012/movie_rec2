@@ -3,173 +3,114 @@ import pickle
 import pandas as pd
 from flask_cors import CORS
 import traceback
-import json
-import os
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}})
 
-# Global variables to track data loading status
-data_loaded = False
-loading_errors = []
-
-def load_data():
-    global movies_df, df3, similarity, data_loaded, loading_errors
-    loading_errors = []
-    
-    try:
-        # Check if files exist first
-        required_files = ['movies.pkl', 'similarity.pkl', 'df3.csv']
-        for file in required_files:
-            if not os.path.exists(file):
-                loading_errors.append(f"Missing file: {file}")
-        
-        if loading_errors:
-            print("❌ Missing required files:")
-            for error in loading_errors:
-                print(f"  - {error}")
-            return False
-        
-        print("Loading movies data...")
-        movies_df = pd.DataFrame(pickle.load(open('movies.pkl', 'rb')))
-        print("Loading similarity matrix...")
-        similarity = pickle.load(open('similarity.pkl', 'rb'))
-        print("Loading df3 data...")
-        df3 = pd.read_csv('df3.csv')
-        
-        # Print sample data to understand the structure
-        print("\nSample movie data:")
-        sample_movie = df3.iloc[0]
-        print(f"Genres format: {type(sample_movie['genres'])} - {sample_movie['genres']}")
-        print(f"Cast format: {type(sample_movie['cast'])} - {sample_movie['cast']}")
-        print(f"Crew format: {type(sample_movie['crew'])} - {sample_movie['crew']}")
-        
-        print("✅ All data loaded successfully!")
-        data_loaded = True
-        return True
-        
-    except Exception as e:
-        error_msg = f"Error loading data: {str(e)}"
-        loading_errors.append(error_msg)
-        print(f"❌ {error_msg}")
-        print(traceback.format_exc())
-        return False
-
-# Initialize data loading
-if not load_data():
-    print("\nInitializing empty DataFrames due to loading errors...")
-    movies_df = pd.DataFrame()
-    df3 = pd.DataFrame()
-    similarity = []
-
-def parse_string_list(value):
-    """Helper function to parse string lists from DataFrame"""
-    if pd.isna(value):
-        return []
-    try:
-        # First try direct eval (for lists)
-        if isinstance(value, str):
-            # Replace single quotes with double quotes for JSON compatibility
-            value = value.replace("'", '"')
-            # Try to parse as JSON
-            return json.loads(value)
-        elif isinstance(value, list):
-            return value
-        return []
-    except:
-        try:
-            # Try eval as a fallback
-            return eval(str(value))
-        except:
-            # If all else fails, return empty list
-            return []
+# Load your data and similarity matrix
+try:
+    print("Loading movies data...")
+    movies_df = pd.DataFrame(pickle.load(open('backend/movies.pkl', 'rb')))
+    print("Loading similarity matrix...")
+    similarity = pickle.load(open('backend/similarity.pkl', 'rb'))
+    print("Loading df3 data...")
+    df3 = pd.read_csv('backend/df3.csv')
+    print("✅ All data loaded successfully!")
+except Exception as e:
+    print(f"❌ Error loading data: {str(e)}")
+    print(traceback.format_exc())
 
 # Helper function to fetch movie recommendations
 def recommend(movie_name):
-    print(f"🔍 Searching for movie: {movie_name}")
-    
-    # Check if data is loaded
-    if movies_df.empty or df3.empty or not similarity:
-        error_msg = "Movie data not loaded. Please check if all required data files exist."
-        print(f"❌ {error_msg}")
-        return jsonify({"error": error_msg}), 500
-    
-    if movie_name not in movies_df['title'].values:
-        error_msg = f"Movie '{movie_name}' not found in database"
-        print(f"❌ {error_msg}")
-        return jsonify({"error": error_msg}), 404
-
     try:
-        # Find the movie index
-        movie_index = movies_df[movies_df['title'] == movie_name].index[0]
+        print(f"🔍 Searching for movie: {movie_name}")
         
-        # Get similarity scores
-        distances = list(enumerate(similarity[movie_index]))
-        recommendations = sorted(distances, key=lambda x: x[1], reverse=True)[1:11]
+        # Debug print statements
+        print(f"movies_df shape: {movies_df.shape}")
+        print(f"similarity matrix shape: {similarity.shape}")
+        print(f"df3 shape: {df3.shape}")
+        
+        # Convert movie_name to lowercase for case-insensitive search
+        movie_name = movie_name.lower()
+        print(f"Lowercase movie name: {movie_name}")
+        
+        # Check if movies_df exists and has data
+        if movies_df is None or len(movies_df) == 0:
+            print("❌ movies_df is empty or None")
+            return jsonify({"error": "Movie database is not available"}), 500
+            
+        # Check the structure of movies_df
+        print(f"movies_df columns: {list(movies_df.columns)}")
+        print(f"First few movie titles: {list(movies_df['title'].head())}")
+        
+        # Create title_lower column if it doesn't exist
+        if 'title_lower' not in movies_df.columns:
+            movies_df['title_lower'] = movies_df['title'].str.lower()
+        
+        # Print a sample of lowercase titles for debugging
+        print(f"Sample of lowercase titles: {list(movies_df['title_lower'].head())}")
+        
+        # Check if the movie exists in our database
+        matching_movies = movies_df[movies_df['title_lower'].str.contains(movie_name, na=False)]
+        if len(matching_movies) == 0:
+            print(f"❌ No movies found containing: {movie_name}")
+            return jsonify({"error": f"No movies found containing '{movie_name}' in our database"}), 404
+            
+        # Get exact match if exists, otherwise take the first partial match
+        exact_match = matching_movies[matching_movies['title_lower'] == movie_name]
+        if len(exact_match) > 0:
+            movie_index = exact_match.index[0]
+            print(f"Found exact match at index: {movie_index}")
+        else:
+            movie_index = matching_movies.index[0]
+            print(f"Using closest match at index: {movie_index}")
+            print(f"Closest match title: {matching_movies.iloc[0]['title']}")
+
+        # Ensure movie_id types are consistent for lookup
+        df3["movie_id"] = df3["movie_id"].astype(int)
+        movies_df["movie_id"] = movies_df["movie_id"].astype(int)
+        
+        # Verify movie_index is valid
+        if movie_index >= len(similarity):
+            print(f"❌ Movie index {movie_index} is out of bounds for similarity matrix of size {len(similarity)}")
+            return jsonify({"error": "Invalid movie index for similarity calculation"}), 500
+            
+        # Get recommendations
+        try:
+            distances = list(enumerate(similarity[movie_index]))
+            recommendations = sorted(distances, key=lambda x: x[1], reverse=True)[1:11]
+            print(f"Found {len(recommendations)} potential recommendations")
+        except Exception as e:
+            print(f"❌ Error calculating recommendations: {str(e)}")
+            print(traceback.format_exc())
+            return jsonify({"error": "Error calculating movie recommendations"}), 500
 
         result = []
-
-        for i, (idx, score) in enumerate(recommendations):
+        for i in recommendations:
             try:
-                movie = movies_df.iloc[idx]
+                movie = movies_df.iloc[i[0]]
                 movie_id = int(movie["movie_id"])
-                print(f"\nProcessing recommendation {i+1}: {movie['title']} (ID: {movie_id})")
-                
-                # Get movie details directly from df3
-                movie_data = df3[df3['movie_id'] == movie_id]
-                if not movie_data.empty:
-                    movie_details = movie_data.iloc[0]
-                    
-                    # Handle potential NaN values
-                    runtime = float(movie_details["runtime"]) if pd.notnull(movie_details["runtime"]) else 0
-                    vote_average = float(movie_details["vote_average"]) if pd.notnull(movie_details["vote_average"]) else 0
-                    
-                    release_date = movie_details["release_date"]
-                    year = release_date.split("-")[0] if pd.notnull(release_date) and isinstance(release_date, str) else ""
-                    
-                    # Parse lists using the helper function
-                    genres = parse_string_list(movie_details["genres"])
-                    cast = parse_string_list(movie_details["cast"])
-                    crew = parse_string_list(movie_details["crew"])
-                    
-                    # Get director from crew
-                    director = crew[0] if crew else "Unknown Director"
-                    
-                    print(f"Parsed data for {movie_details['title']}:")
-                    print(f"Genres: {genres}")
-                    print(f"Cast: {cast}")
-                    print(f"Director: {director}")
-                    
-                    details = {
-                        "movie_id": int(movie_id),
-                        "title": str(movie_details["title"]),
-                        "overview": str(movie_details["overview"]) if pd.notnull(movie_details["overview"]) else "",
-                        "genres": genres,
-                        "cast": cast,
-                        "director": director,
-                        "runtime": runtime,
-                        "vote_average": vote_average,
-                        "tagline": str(movie_details["tagline"]) if pd.notnull(movie_details["tagline"]) else "",
-                        "year": year,
-                        "poster": fetch_poster(movie_id)
-                    }
-                    print(f"✅ Movie details: {json.dumps(details, indent=2)}")
+                print(f"Processing recommendation: {movie['title']} (ID: {movie_id})")
+
+                # Fetch movie details
+                details = get_movie_details(movie_id)
+
+                # Ensure valid data is appended
+                if details:
+                    print(f"✅ Appending: {details['title']} - {movie_id}")
                     result.append(details)
                 else:
-                    print(f"❌ No details found in df3 for Movie ID: {movie_id}")
+                    print(f"❌ Missing Details for Movie ID: {movie_id}")
             except Exception as e:
-                print(f"❌ Error processing recommendation: {str(e)}")
+                print(f"❌ Error processing recommendation {i}: {str(e)}")
                 print(traceback.format_exc())
                 continue
 
         if not result:
-            error_msg = "No valid recommendations found"
-            print(f"❌ {error_msg}")
-            return jsonify({"error": error_msg}), 404
+            return jsonify({"error": "No valid recommendations found"}), 404
 
-        print(f"✅ Returning {len(result)} recommendations")
+        print(f"✅ Successfully returning {len(result)} recommendations")
         return jsonify(result)
-        
     except Exception as e:
         print(f"❌ Error in recommend function: {str(e)}")
         print(traceback.format_exc())
@@ -177,17 +118,8 @@ def recommend(movie_name):
 
 def get_movie_details(movie_id):
     try:
-        # Convert movie_id to integer
-        movie_id = int(movie_id)
-        # Find the movie in df3
-        movie_data = df3[df3['movie_id'] == movie_id]
-        if movie_data.empty:
-            print(f"❌ Movie not found with ID: {movie_id}")
-            return None
-            
-        movie = movie_data.iloc[0]
+        movie = df3[df3['movie_id'] == movie_id].iloc[0]
         return {
-            "movie_id": movie_id,
             "title": movie["title"],
             "overview": movie["overview"],
             "genres": movie["genres"],
@@ -197,7 +129,8 @@ def get_movie_details(movie_id):
             "vote_average": movie["vote_average"],
             "tagline": movie["tagline"],
             "year": movie["release_date"].split("-")[0],
-            "poster": fetch_poster(movie_id)
+            "poster": fetch_poster(movie_id),
+            "movie_id": int(movie_id)
         }
     except Exception as e:
         print(f"❌ Error getting movie details for ID {movie_id}: {str(e)}")
@@ -222,43 +155,14 @@ def fetch_poster(movie_id):
     return f"https://image.tmdb.org/t/p/w500{poster_path}"
 
 # Flask route to get movie details
-@app.route('/movie/<movie_id>', methods=['GET'])
+@app.route('/movie/<int:movie_id>', methods=['GET'])
 def movie_details(movie_id):
-    try:
-        # Convert movie_id to integer, handling both string and float inputs
-        movie_id_int = int(float(movie_id))
-        details = get_movie_details(movie_id_int)
-        if details:
-            return jsonify(details)
-        else:
-            return jsonify({"error": "Movie not found"}), 404
-    except ValueError:
-        return jsonify({"error": "Invalid movie ID"}), 400
-    except Exception as e:
-        print(f"❌ Error in movie_details endpoint: {str(e)}")
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/status', methods=['GET'])
-def get_status():
-    """Endpoint to check data loading status"""
-    return jsonify({
-        "status": "ready" if data_loaded else "error",
-        "errors": loading_errors if loading_errors else None
-    })
+    return jsonify(get_movie_details(movie_id))
 
 @app.route('/recommend', methods=['POST'])
 def get_recommendations():
     try:
         print("📥 Received recommendation request")
-        
-        # Check if data is loaded
-        if not data_loaded:
-            error_msg = "Movie data not loaded. Please check server logs for details."
-            if loading_errors:
-                error_msg += f" Errors: {', '.join(loading_errors)}"
-            print(f"❌ {error_msg}")
-            return jsonify({"error": error_msg}), 500
-        
         data = request.json
         print(f"Request data: {data}")
         
@@ -269,8 +173,7 @@ def get_recommendations():
         movie_name = data.get('movie')
         print(f"🎬 Processing request for movie: {movie_name}")
         
-        recommendations = recommend(movie_name)
-        return recommendations
+        return recommend(movie_name)
         
     except Exception as e:
         print(f"❌ Error in get_recommendations: {str(e)}")
@@ -294,8 +197,44 @@ def random_movie():
         "vote_average": movie["vote_average"],
         "tagline": movie["tagline"],
         "year": movie["release_date"].split("-")[0],
-        "poster": fetch_poster(movie["movie_id"])
+        "poster": fetch_poster(movie["movie_id"]),
+        "movie_id": int(movie["movie_id"])
     })
+
+# Add a debug endpoint to list available movies
+@app.route('/movies', methods=['GET'])
+def list_movies():
+    try:
+        # Get the limit parameter, default to 20
+        limit = request.args.get('limit', default=20, type=int)
+        # Get the search parameter, default to empty string
+        search = request.args.get('search', default='', type=str).lower()
+        
+        if movies_df is None or len(movies_df) == 0:
+            return jsonify({"error": "Movie database is not available"}), 500
+            
+        # Add lowercase title if not already there
+        if 'title_lower' not in movies_df.columns:
+            movies_df['title_lower'] = movies_df['title'].str.lower()
+        
+        # Filter movies if search parameter is provided
+        if search:
+            filtered_movies = movies_df[movies_df['title_lower'].str.contains(search)]
+        else:
+            filtered_movies = movies_df
+            
+        # Get the specified number of movies
+        movies_list = filtered_movies.head(limit)[['title', 'movie_id']].to_dict('records')
+        
+        return jsonify({
+            "total_movies": len(movies_df),
+            "filtered_count": len(filtered_movies),
+            "movies": movies_list
+        })
+    except Exception as e:
+        print(f"❌ Error in list_movies: {str(e)}")
+        print(traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)
