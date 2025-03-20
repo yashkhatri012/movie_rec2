@@ -10,11 +10,11 @@ CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}})
 # Load your data and similarity matrix
 try:
     print("Loading movies data...")
-    movies_df = pd.DataFrame(pickle.load(open('backend/movies.pkl', 'rb')))
+    movies_df = pd.DataFrame(pickle.load(open('movies.pkl', 'rb')))
     print("Loading similarity matrix...")
-    similarity = pickle.load(open('backend/similarity.pkl', 'rb'))
+    similarity = pickle.load(open('similarity.pkl', 'rb'))
     print("Loading df3 data...")
-    df3 = pd.read_csv('backend/df3.csv')
+    df3 = pd.read_csv('df3.csv')
     print("✅ All data loaded successfully!")
 except Exception as e:
     print(f"❌ Error loading data: {str(e)}")
@@ -159,7 +159,7 @@ def fetch_poster(movie_id):
 def movie_details(movie_id):
     return jsonify(get_movie_details(movie_id))
 
-@app.route('/recommend', methods=['POST'])
+@app.route('/recommend', methods=['POST','GET'])
 def get_recommendations():
     try:
         print("📥 Received recommendation request")

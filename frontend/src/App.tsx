@@ -1,12 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState ,useEffect  } from 'react';
 import { Film, Search } from 'lucide-react';
 import { MovieCard } from './components/MovieCard';
 import { MovieDetails } from './components/MovieDetails';
 import type { Movie, MovieDetails as MovieDetailsType } from './types';
-import axios from "axios";
+import axios from 'axios';
 
-
-const API_URL = 'http://localhost:5000';
 
 function App() {
   const [movies, setMovies] = useState<Movie[]>([]);
@@ -15,179 +13,76 @@ function App() {
   const [loading, setLoading] = useState(false);
 
 
+  // 🧹 Helper to transform API response
+  const transformMovie = (data: any): Movie => ({
+    id: data.movie_id,
+    title: data.title,
+    poster_path: data.poster,
+    vote_average: data.vote_average,
+    release_date: data.year,
+    genres: JSON.parse(data.genres.replace(/'/g, '"')), // Convert string to array
+  });
 
-  const fetchRecommendations = async (movieName: string) => {
+  // ✅ Fetch movies from API
+  useEffect(() => {
+    const fetchMovies = async () => {
+      try {
+        setLoading(true);
+        const response = await axios.get('http://localhost:5000/recommend');
+        const transformedMovies = response.data.map(transformMovie);
+        setMovies(transformedMovies);
+      } catch (error) {
+        console.error('Error fetching movies:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchMovies();
+  }, []);
+
+  // ✅ Fetch movie details
+  const handleMovieClick = async (movieId: number) => {
     try {
       setLoading(true);
-      console.log('🔍 Searching for:', movieName);
-      
-      const response = await axios.post('http://localhost:5000/recommend', {
-        movie: movieName,
-      });
-      
-      console.log('📦 Raw response data:', response.data);
-      
-      // If no recommendations found
-      if (!response.data || response.data.error) {
-        console.log('❌ No recommendations found:', response.data?.error || 'Unknown error');
-        alert(response.data?.error || 'No recommendations found');
-        setMovies([]);
-        setLoading(false);
-        return;
-      }
+      const response = await axios.get(`http://localhost:5000/recommend/${movieId}`);
+      const movieDetails = response.data;
 
-      // Ensure we're working with an array
-      const recommendedMovies = Array.isArray(response.data) ? response.data : [response.data];
-      console.log('📋 Processing movies:', recommendedMovies);
-
-      const transformedMovies = recommendedMovies
-        .filter(movie => movie && movie.title) // Only process movies with at least a title
-        .map(movie => {
-          console.log('🎬 Processing movie:', movie);
-          
-          // Parse genres
-          let parsedGenres: string[] = [];
-          try {
-            if (typeof movie.genres === 'string') {
-              // Handle string format like "['Action', 'Adventure']"
-              const genresString = movie.genres.replace(/'/g, '"');
-              parsedGenres = JSON.parse(genresString);
-            } else if (Array.isArray(movie.genres)) {
-              parsedGenres = movie.genres;
-            }
-          } catch (e) {
-            console.error('Error parsing genres:', e);
-            parsedGenres = [];
-          }
-
-          // Parse cast
-          let parsedCast: string[] = [];
-          try {
-            if (typeof movie.cast === 'string') {
-              // Handle string format like "['Actor1', 'Actor2']"
-              const castString = movie.cast.replace(/'/g, '"');
-              parsedCast = JSON.parse(castString);
-            } else if (Array.isArray(movie.cast)) {
-              parsedCast = movie.cast;
-            }
-          } catch (e) {
-            console.error('Error parsing cast:', e);
-            parsedCast = [];
-          }
-
-          // Parse director
-          let parsedDirector = '';
-          try {
-            if (typeof movie.director === 'string') {
-              const directorString = movie.director.replace(/'/g, '"');
-              const directors = JSON.parse(directorString);
-              parsedDirector = Array.isArray(directors) ? directors[0] : directors;
-            } else if (Array.isArray(movie.director)) {
-              parsedDirector = movie.director[0];
-            } else {
-              parsedDirector = movie.director || 'Unknown Director';
-            }
-          } catch (e) {
-            console.error('Error parsing director:', e);
-            parsedDirector = 'Unknown Director';
-          }
-
-          // Extract movie_id from the poster URL or use a provided movie_id
-          let movieId = movie.movie_id;
-          
-          if (!movieId && typeof movie.id === 'number') {
-            movieId = movie.id;
-          }
-          
-          if (!movieId && movie.poster) {
-            try {
-              const match = movie.poster.match(/\/movie\/(\d+)\?/);
-              if (match) {
-                movieId = parseInt(match[1]);
-              }
-            } catch (e) {
-              console.error('Error extracting movie ID from poster URL:', e);
-            }
-          }
-
-          console.log('Movie ID found:', movieId);  // Add logging
-
-          return {
-            id: movieId || Math.random(), // Only use random ID as last resort
-            movie_id: movieId, // Keep the original movie_id
-            title: movie.title,
-            overview: movie.overview || 'No overview available',
-            poster_path: movie.poster || '',
-            vote_average: Number(movie.vote_average) || 0,
-            release_date: movie.year ? `${movie.year}-01-01` : '2000-01-01',
-            genres: parsedGenres,
-            cast: parsedCast,
-            director: parsedDirector,
-            runtime: Number(movie.runtime) || 0,
-            tagline: movie.tagline || 'No tagline available'
-          };
-        });
-
-      console.log('✨ Transformed movies:', transformedMovies);
-      
-      if (transformedMovies.length === 0) {
-        console.log('⚠️ No valid movies found in response');
-        alert('No valid recommendations found');
-      }
-      
-      setMovies(transformedMovies);
-      setLoading(false);
-    } catch (error) {
-      console.error('❌ Error fetching recommendations:', error);
-      if (axios.isAxiosError(error)) {
-        console.error('Axios error details:', {
-          status: error.response?.status,
-          statusText: error.response?.statusText,
-          data: error.response?.data,
-          headers: error.response?.headers
-        });
-        // Show error message to user
-        alert(error.response?.data?.error || 'Error fetching recommendations');
-      } else {
-        alert('An unexpected error occurred');
-      }
-      setMovies([]);
-      setLoading(false);
-    }
-  };
-  
-  // Fetch full movie details
-  const fetchMovieDetails = async (movieId: number) => {
-    try {
-      console.log('Fetching details for movie ID:', movieId);
-      const response = await axios.get(`${API_URL}/movie/${movieId}`);
-      setSelectedMovie({ ...response.data, id: movieId });
+      // Parse arrays and keep the format consistent
+      const transformedDetails: MovieDetailsType = {
+        id: movieDetails.movie_id,
+        title: movieDetails.title,
+        poster_path: movieDetails.poster,
+        runtime: movieDetails.runtime,
+        vote_average: movieDetails.vote_average,
+        release_date: movieDetails.year,
+        director: JSON.parse(movieDetails.director.replace(/'/g, '"')),
+        overview: movieDetails.overview,
+        tagline: movieDetails.tagline,
+        genres: JSON.parse(movieDetails.genres.replace(/'/g, '"')),
+        cast: JSON.parse(movieDetails.cast.replace(/'/g, '"')),
+      };
+      setSelectedMovie(transformedDetails);
     } catch (error) {
       console.error('Error fetching movie details:', error);
-      // Show some user feedback here
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleMovieClick = async (movie: Movie) => {
-    console.log('Handling click for movie:', movie);
-    
-    const movieId = movie.movie_id || movie.id;
-    
-    if (movieId) {
-      console.log('Using movie ID for details:', movieId);
-      fetchMovieDetails(movieId);
-    } else {
-      console.error('No valid movie ID available');
-      // Show some user feedback
-      alert('Sorry, cannot retrieve details for this movie');
-    }
-  };
-
-  const handleSearch = (e: React.FormEvent) => {
+  // ✅ Handle search
+  const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (searchQuery.trim()) fetchRecommendations(searchQuery);
+    try {
+      setLoading(true);
+      const response = await axios.get(`http://localhost:5000/recommend?search=${searchQuery}`);
+      const filteredMovies = response.data.map(transformMovie);
+      setMovies(filteredMovies);
+    } catch (error) {
+      console.error('Error searching movies:', error);
+    } finally {
+      setLoading(false);
+    }
   };
-
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100">
       <header className="bg-gray-800/50 backdrop-blur-lg border-b border-gray-700 sticky top-0 z-40">
@@ -234,7 +129,7 @@ function App() {
                 <MovieCard
                   key={movie.id}
                   movie={movie}
-                  onClick={() => handleMovieClick(movie)}
+                  onClick={() => handleMovieClick(movie.id)}
                 />
               ))}
             </div>
