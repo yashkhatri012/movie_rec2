@@ -14,25 +14,80 @@ function App() {
 
 
   // 🧹 Helper to transform API response
-  const transformMovie = (data: any): Movie => ({
-    id: data.movie_id,
-    title: data.title,
-    poster_path: data.poster,
-    vote_average: data.vote_average,
-    release_date: data.year,
-    genres: JSON.parse(data.genres.replace(/'/g, '"')), // Convert string to array
-  });
+  const transformMovie = (data: any): Movie => {
+    console.log('Raw movie data in transformMovie:', data);
+    
+    // Handle case where movie_id might be undefined
+    const movieId = data.movie_id || data.id || Math.floor(Math.random() * 10000);
+    
+    // Handle case where genres might be a string that needs parsing
+    let genres: string[] = [];
+    try {
+      if (typeof data.genres === 'string') {
+        // Replace single quotes with double quotes for valid JSON
+        genres = JSON.parse(data.genres.replace(/'/g, '"'));
+      } else if (Array.isArray(data.genres)) {
+        genres = data.genres;
+      }
+    } catch (e) {
+      console.warn('Error parsing genres for movie:', data.title, e);
+      genres = [];
+    }
+    
+    return {
+      id: movieId,
+      title: data.title || 'Unknown Movie',
+      overview: data.overview || 'No overview available',
+      poster_path: data.poster || 'https://via.placeholder.com/300x450?text=No+Poster',
+      vote_average: parseFloat(data.vote_average) || 0,
+      release_date: data.year || data.release_date || '2000',
+      genres: genres,
+    };
+  };
 
   // ✅ Fetch movies from API
   useEffect(() => {
     const fetchMovies = async () => {
       try {
         setLoading(true);
-        const response = await axios.get('http://localhost:5000/recommend');
-        const transformedMovies = response.data.map(transformMovie);
-        setMovies(transformedMovies);
+        console.log('Fetching movies from /popular endpoint...');
+        const response = await axios.get('http://localhost:5000/popular');
+        console.log('Raw response from /popular:', response);
+        
+        // Check if response.data is an array or has an 'error' field
+        if (response.data && response.data.error) {
+          console.error('API returned an error:', response.data.error);
+          setMovies([]);
+          return;
+        }
+        
+        // Ensure we have an array to map over
+        const moviesData = Array.isArray(response.data) ? response.data : [];
+        
+        console.log('Movie data array length:', moviesData.length);
+        if (moviesData.length === 0) {
+          console.warn('No movies returned from API');
+          return;
+        }
+        
+        console.log('First movie in response:', moviesData[0]);
+        
+        try {
+          const transformedMovies = moviesData.map(movie => {
+            console.log('Processing movie:', movie.title);
+            return transformMovie(movie);
+          });
+          console.log('Transformed movies:', transformedMovies);
+          setMovies(transformedMovies);
+        } catch (parseError) {
+          console.error('Error transforming movie data:', parseError);
+          // Try to handle the response in a different way if transformation fails
+          setMovies([]);
+        }
       } catch (error) {
         console.error('Error fetching movies:', error);
+        // Add fallback if there's an error
+        setMovies([]);
       } finally {
         setLoading(false);
       }
@@ -42,24 +97,45 @@ function App() {
 
   // ✅ Fetch movie details
   const handleMovieClick = async (movieId: number) => {
+    if (!movieId) {
+      console.error('Invalid movie ID');
+      return;
+    }
+    
     try {
       setLoading(true);
-      const response = await axios.get(`http://localhost:5000/recommend/${movieId}`);
+      console.log(`Fetching details for movie ID: ${movieId}`);
+      
+      const response = await axios.get(`http://localhost:5000/movie/${movieId}`);
+      console.log('Movie details response:', response.data);
+      
+      // Check if response has an error
+      if (!response.data || response.data.error) {
+        console.error('API returned an error:', response.data?.error || 'Empty response');
+        return;
+      }
+      
       const movieDetails = response.data;
 
       // Parse arrays and keep the format consistent
       const transformedDetails: MovieDetailsType = {
-        id: movieDetails.movie_id,
-        title: movieDetails.title,
-        poster_path: movieDetails.poster,
-        runtime: movieDetails.runtime,
-        vote_average: movieDetails.vote_average,
-        release_date: movieDetails.year,
-        director: JSON.parse(movieDetails.director.replace(/'/g, '"')),
-        overview: movieDetails.overview,
-        tagline: movieDetails.tagline,
-        genres: JSON.parse(movieDetails.genres.replace(/'/g, '"')),
-        cast: JSON.parse(movieDetails.cast.replace(/'/g, '"')),
+        id: movieDetails.movie_id || movieId,
+        title: movieDetails.title || 'Unknown Movie',
+        poster_path: movieDetails.poster || 'https://via.placeholder.com/300x450?text=No+Poster',
+        runtime: movieDetails.runtime || 0,
+        vote_average: movieDetails.vote_average || 0,
+        release_date: movieDetails.year || '2000',
+        director: typeof movieDetails.director === 'string' ? 
+          JSON.parse(movieDetails.director.replace(/'/g, '"')) : 
+          (movieDetails.director || 'Unknown'),
+        overview: movieDetails.overview || 'No overview available',
+        tagline: movieDetails.tagline || '',
+        genres: typeof movieDetails.genres === 'string' ? 
+          JSON.parse(movieDetails.genres.replace(/'/g, '"')) : 
+          (movieDetails.genres || []),
+        cast: typeof movieDetails.cast === 'string' ? 
+          JSON.parse(movieDetails.cast.replace(/'/g, '"')) : 
+          (movieDetails.cast || []),
       };
       setSelectedMovie(transformedDetails);
     } catch (error) {
@@ -72,13 +148,39 @@ function App() {
   // ✅ Handle search
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!searchQuery.trim()) return;
+    
     try {
       setLoading(true);
-      const response = await axios.get(`http://localhost:5000/recommend?search=${searchQuery}`);
-      const filteredMovies = response.data.map(transformMovie);
+      console.log('Searching for:', searchQuery);
+      
+      const response = await axios.post('http://localhost:5000/recommend', {
+        movie: searchQuery
+      });
+      
+      console.log('Response from /recommend:', response.data);
+      
+      // Check if response has an error
+      if (response.data.error) {
+        console.error('API returned an error:', response.data.error);
+        setMovies([]);
+        return;
+      }
+      
+      // Ensure we have an array to map over
+      const moviesData = Array.isArray(response.data) ? response.data : [];
+      
+      if (moviesData.length === 0) {
+        console.warn('No recommendations found for this movie');
+        alert('No recommendations found. Try a different movie name.');
+      }
+      
+      const filteredMovies = moviesData.map(transformMovie);
       setMovies(filteredMovies);
     } catch (error) {
       console.error('Error searching movies:', error);
+      alert('Error searching for movies. Please try again.');
+      setMovies([]);
     } finally {
       setLoading(false);
     }
